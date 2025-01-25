@@ -17,7 +17,6 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 @app.post("/incoming-call")
 async def handle_incoming_call(request: Request):
     response = VoiceResponse()
-    response.say("Connexion en cours", language="fr-FR")
     connect = Connect()
     connect.stream(url=f'wss://{request.headers["host"]}/media')
     response.append(connect)
@@ -26,8 +25,9 @@ async def handle_incoming_call(request: Request):
 @app.websocket("/media")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    
     openai_ws = await websockets.connect(
-        'wss://api.openai.com/v1/realtime/speech',
+        'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17',
         extra_headers={
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "OpenAI-Beta": "realtime=v1"
@@ -35,32 +35,42 @@ async def websocket_endpoint(websocket: WebSocket):
     )
 
     try:
-        async def forward_to_openai():
-            while True:
-                message = await websocket.receive_text()
-                data = json.loads(message)
-                if data.get('event') == 'media':
-                    await openai_ws.send(json.dumps({
-                        "type": "audio",
-                        "data": data['media']['payload']
-                    }))
+        # Send initial configuration
+        await openai_ws.send(json.dumps({
+            "type": "response.create",
+            "response": {
+                "modalities": ["text", "audio"],
+                "instructions": "Tu es un assistant AI sympathique qui parle français."
+            }
+        }))
 
-        async def forward_to_twilio():
-            while True:
+        while True:
+            data = await websocket.receive_json()
+            print(f"Received from Twilio: {data}")
+            
+            if data.get('event') == 'media':
+                await openai_ws.send(json.dumps({
+                    "type": "input_audio_buffer.append",
+                    "audio": data['media']['payload']
+                }))
+                
                 response = await openai_ws.recv()
                 response_data = json.loads(response)
-                if response_data.get('type') == 'audio':
+                print(f"Received from OpenAI: {response_data}")
+                
+                if response_data.get('type') == 'response.audio.delta':
                     await websocket.send_json({
                         "event": "media",
-                        "streamSid": response_data.get('streamSid'),
-                        "media": {"payload": response_data['data']}
+                        "streamSid": data['streamSid'],
+                        "media": {
+                            "payload": response_data['delta']
+                        }
                     })
-
-        await asyncio.gather(forward_to_openai(), forward_to_twilio())
     except Exception as e:
         print(f"Error: {e}")
         await openai_ws.close()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
