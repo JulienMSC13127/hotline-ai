@@ -3,39 +3,45 @@ from twilio.twiml.voice_response import VoiceResponse
 import os
 import json
 import websocket
+import threading
 import requests
+import time
 
 app = Flask(__name__)
 
+# Configurations
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = "gpt-4o-realtime-preview-2024-12-17"
 
-# WebSocket URL OpenAI Realtime
+# WebSocket OpenAI API details
 url = f"wss://api.openai.com/v1/realtime?model={OPENAI_MODEL}"
 headers = [
     f"Authorization: Bearer {OPENAI_API_KEY}",
     "OpenAI-Beta: realtime=v1"
 ]
 
-def on_open(ws):
-    print("Connected to OpenAI Realtime API")
+# Function to keep the WebSocket connection alive
+def keep_alive(ws):
+    while ws.sock and ws.sock.connected:
+        time.sleep(30)
+        ws.send(json.dumps({"type": "ping"}))
 
-def on_message(ws, message):
-    data = json.loads(message)
-    print("AI Response:", json.dumps(data, indent=2))
-    # Extraire la réponse texte et générer un fichier audio
-    ai_text = data.get("choices", [{}])[0].get("content", "Je n'ai pas compris.")
-    generate_audio(ai_text)
+# Function to transcribe Twilio audio using OpenAI Whisper
+def transcribe_audio(audio_url):
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
+    }
+    audio_data = requests.get(audio_url).content
+    files = {
+        "file": ("audio.wav", audio_data, "audio/wav")
+    }
+    response = requests.post("https://api.openai.com/v1/audio/transcriptions",
+                             headers=headers, files=files)
+    return response.json().get("text", "Je n'ai pas compris.")
 
-ws = websocket.WebSocketApp(
-    url,
-    header=headers,
-    on_open=on_open,
-    on_message=on_message
-)
-
+# Function to convert AI text response to speech
 def generate_audio(text):
-    """Convertir la réponse texte en audio MP3"""
+    """Convert text response to audio MP3 using OpenAI TTS"""
     openai_api_url = "https://api.openai.com/v1/audio/speech"
     payload = {
         "model": "tts-1",
@@ -48,61 +54,69 @@ def generate_audio(text):
     }
     response = requests.post(openai_api_url, headers=headers, json=payload)
     if response.status_code == 200:
-        with open("response.mp3", "wb") as f:
+        with open("static/response.mp3", "wb") as f:
             f.write(response.content)
-        return "response.mp3"
+        return "static/response.mp3"
     return None
 
+# WebSocket connection to OpenAI
+def send_to_openai(text):
+    ws = websocket.WebSocketApp(url, header=headers)
+    
+    def on_open(ws):
+        print("WebSocket connected to OpenAI Realtime API.")
+        ws.send(json.dumps({
+            "type": "response.create",
+            "response": {
+                "modalities": ["text"],
+                "instructions": text
+            }
+        }))
+    
+    def on_message(ws, message):
+        data = json.loads(message)
+        ai_text = data.get("choices", [{}])[0].get("content", "Je n'ai pas compris.")
+        print(f"AI Response: {ai_text}")
+        generate_audio(ai_text)
+    
+    ws.on_open = on_open
+    ws.on_message = on_message
+
+    # Start the connection
+    ws.run_forever()
+
+# Twilio route to handle incoming calls
 @app.route("/incoming-call", methods=["POST"])
 def incoming_call():
-    """Twilio webhook pour gérer les appels entrants"""
     response = VoiceResponse()
-    response.say("Bonjour, bienvenue sur la hotline IA. Dites-moi votre question après le bip.", voice="alice", language="fr-FR")
-    response.record(action="/process-recording", max_length="30", play_beep=True)
+    response.say("Bonjour, bienvenue sur la hotline IA. Posez votre question après le bip.", voice="alice", language="fr-FR")
+
+    response.record(
+        action="/process-recording",
+        max_length="30",
+        play_beep=True
+    )
     return str(response)
 
+# Process the recording from Twilio and send to OpenAI
 @app.route("/process-recording", methods=["POST"])
 def process_recording():
-    """Twilio envoie l'enregistrement vocal ici, puis il est transmis à l'IA."""
     recording_url = request.form.get("RecordingUrl")
     print(f"Enregistrement reçu : {recording_url}")
 
-    # Envoyer l'audio Twilio à Whisper (transcription)
+    response = VoiceResponse()
+    response.say("Votre message est en cours de traitement, veuillez patienter.", voice="alice", language="fr-FR")
+
+    # Process the audio transcription and AI response asynchronously
+    threading.Thread(target=handle_ai_request, args=(recording_url,)).start()
+
+    return str(response)
+
+def handle_ai_request(recording_url):
     transcript = transcribe_audio(recording_url)
+    print(f"Transcription: {transcript}")
     
-    # Envoyer le texte transcrit à OpenAI
-    ws.send(json.dumps({
-        "type": "response.create",
-        "response": {
-            "modalities": ["text"],
-            "instructions": transcript
-        }
-    }))
-
-    # Lire la réponse audio
-    audio_file = "response.mp3"
-    if audio_file:
-        response = VoiceResponse()
-        response.play("https://hotline-ai.onrender.com/static/response.mp3")
-        response.pause(length=2)
-        response.say("Avez-vous une autre question ?", voice="alice", language="fr-FR")
-        response.record(action="/process-recording", max_length="30", play_beep=True)
-        return str(response)
-    
-    return str(VoiceResponse().say("Une erreur est survenue."))
-
-def transcribe_audio(audio_url):
-    """Transcrire l'audio de Twilio via OpenAI Whisper"""
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}"
-    }
-    audio_data = requests.get(audio_url).content
-    files = {
-        "file": ("audio.wav", audio_data, "audio/wav")
-    }
-    response = requests.post("https://api.openai.com/v1/audio/transcriptions",
-                             headers=headers, files=files)
-    return response.json().get("text", "Je n'ai pas compris.")
+    send_to_openai(transcript)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
