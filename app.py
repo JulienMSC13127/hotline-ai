@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Connexion à OpenAI via WebSocket
+# Connexion au WebSocket OpenAI
 url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
 headers = [
     f"Authorization: Bearer {OPENAI_API_KEY}",
@@ -28,7 +28,7 @@ def on_open(ws):
 
 def on_message(ws, message):
     data = json.loads(message)
-    print("Received event:", json.dumps(data, indent=2))
+    print("Received response from AI:", json.dumps(data, indent=2))
 
 ws = websocket.WebSocketApp(
     url,
@@ -39,30 +39,44 @@ ws = websocket.WebSocketApp(
 
 @app.route("/incoming-call", methods=["POST"])
 def incoming_call():
-    """Twilio webhook to handle incoming calls"""
+    """Twilio webhook pour gérer les appels entrants"""
     response = VoiceResponse()
-    response.say("Bienvenue sur la hotline IA. Posez votre question après le bip.", voice="alice", language="fr-FR")
+    
+    # Faire parler l'IA directement
+    response.say("Bonjour, comment puis-je vous aider ?", voice="alice", language="fr-FR")
 
-    # Enregistrer la voix de l'utilisateur
-    response.record(
-        action="/process-recording",
-        max_length="30",
-        play_beep=True
+    # Ajouter une option pour continuer la conversation
+    response.gather(
+        input="speech",
+        action="/process-speech",
+        speechTimeout="auto"
     )
-
+    
     return str(response)
 
-@app.route("/process-recording", methods=["POST"])
-def process_recording():
-    """Traitement de l'enregistrement vocal"""
-    recording_url = request.form.get('RecordingUrl')
-    print(f"Recording URL received: {recording_url}")
+@app.route("/process-speech", methods=["POST"])
+def process_speech():
+    """Traitement de la parole enregistrée par Twilio"""
+    user_input = request.form.get('SpeechResult')
+    print(f"Utilisateur a dit : {user_input}")
 
-    # Répondre à l'appelant
+    # Simulation de l'envoi au modèle OpenAI
     response = VoiceResponse()
-    response.say("Merci pour votre message. Nous allons vous répondre sous peu.", voice="alice", language="fr-FR")
+    response.say(f"Vous avez dit : {user_input}. Laissez-moi réfléchir...", voice="alice", language="fr-FR")
+
+    # Simuler une réponse AI
+    ai_response = "Je pense que la meilleure solution est d'essayer encore une fois."
+
+    response.say(ai_response, voice="alice", language="fr-FR")
+
+    response.pause(length=2)
+    response.say("Avez-vous une autre question ?", voice="alice", language="fr-FR")
+
+    # Relancer une nouvelle écoute de l'utilisateur
+    response.gather(input="speech", action="/process-speech", speechTimeout="auto")
 
     return str(response)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
