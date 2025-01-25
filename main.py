@@ -1,16 +1,13 @@
 import os
 import json
 import base64
-import asyncio
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from twilio.twiml.voice_response import VoiceResponse, Connect
-from dotenv import load_dotenv
-
-load_dotenv()
 
 app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,28 +20,24 @@ app.add_middleware(
 async def handle_incoming_call(request: Request):
     response = VoiceResponse()
     connect = Connect()
-    connect.stream(url=f'wss://{request.headers["host"]}/media')
+    connect.stream(url=f"wss://{request.headers['host']}/media")
     response.append(connect)
     response.say("Bienvenue sur la hotline AI.", language="fr-FR")
-    return HTMLResponse(content=str(response), media_type="application/xml")
+    return HTMLResponse(str(response), media_type="application/xml")
 
 @app.websocket("/media")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
-            data = await websocket.receive_json()
-            print(f"Received: {data}")
-            
+            data = await websocket.receive_text()
+            data = json.loads(data)
             if data.get('event') == 'media':
-                response_data = {
+                await websocket.send_json({
                     "event": "media",
                     "streamSid": data.get('streamSid'),
-                    "media": {
-                        "payload": data['media']['payload']
-                    }
-                }
-                await websocket.send_json(response_data)
+                    "media": data.get('media')
+                })
     except Exception as e:
         print(f"Error: {e}")
 
