@@ -8,6 +8,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect, Start, Stream
+from dotenv import load_dotenv
+
+load_dotenv()
+
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+SYSTEM_MESSAGE = "Vous êtes un assistant AI sympathique qui répond en français."
 
 app = FastAPI()
 
@@ -19,34 +25,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-async def root():
-    return {"status": "running"}
-
 @app.post("/incoming-call")
 async def handle_incoming_call(request: Request):
     response = VoiceResponse()
-    
-    start = Start()
-    start.stream(url=f'wss://{request.headers["host"]}/media')
-    response.append(start)
-    
-    response.say("Bienvenue sur la hotline AI", language="fr-FR")
-    
+    connect = Connect()
+    connect.stream(url=f'wss://{request.headers["host"]}/media')
+    response.append(connect)
+    response.say("Bienvenue sur la hotline AI. Comment puis-je vous aider?", language="fr-FR")
     return HTMLResponse(content=str(response), media_type="application/xml")
 
 @app.websocket("/media")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    try:
-        while True:
-            data = await websocket.receive_text()
-            # Log pour debug
-            print(f"Received: {data}")
-            await websocket.send_text(data)
-    except Exception as e:
-        print(f"Error: {e}")
+    
+    async with websockets.connect(
+        'wss://api.openai.com/v1/audio/speech',
+        extra_headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+    ) as openai_ws:
+        stream_sid = None
         
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+        async def receive_from_twilio():
+            try:
+                async for message in websocket.iter_text():
+                    data = json.loads(message)
+                    if data['event'] == 'media':
+                        await openai_ws.send(json.dumps({
+                            "audio": data['media']['payload'],
+                            "model": "whisper-1"
+                        }))
+            except WebSocketDisconnect:
+                print("Client déconnecté")
+
+        async def send_to_twilio():
+            try:
+                async for message in openai_ws:
+                    response = json.loads(message)
+                    if response.get('audio'):
+                        await websocket.send_json({
+                            "event": "media",
+                            "streamSid": stream_sid,
+                            "media": {
+                                "payload": response['audio']
+                            }
+                        })
+            except Exception as e:
+                print(f"Erreur: {e}")
+
+        await asyncio.gather(receive_from_twilio(), send_to_twilio())
