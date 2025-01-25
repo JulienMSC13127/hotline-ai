@@ -1,5 +1,5 @@
-flask
+fastapi
 uvicorn
-gunicorn
+websockets
 twilio
-websocket-client
+python-dotenv
