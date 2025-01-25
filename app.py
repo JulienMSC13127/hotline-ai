@@ -1,14 +1,14 @@
+from flask import Flask, request
+from twilio.twiml.voice_response import VoiceResponse
 import os
 import json
 import websocket
-from flask import Flask, request
-from twilio.twiml.voice_response import VoiceResponse
 
 app = Flask(__name__)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# WebSocket connection details
+# Connexion à OpenAI via WebSocket
 url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
 headers = [
     f"Authorization: Bearer {OPENAI_API_KEY}",
@@ -37,26 +37,31 @@ ws = websocket.WebSocketApp(
     on_message=on_message
 )
 
-@app.route("/voice", methods=["POST"])
-def voice():
-    """Twilio webhook for handling calls"""
+@app.route("/incoming-call", methods=["POST"])
+def incoming_call():
+    """Twilio webhook to handle incoming calls"""
     response = VoiceResponse()
-    response.say("Bonjour, je suis votre assistant IA. Posez votre question après le bip.", voice="alice", language="fr-FR")
-    
+    response.say("Bienvenue sur la hotline IA. Posez votre question après le bip.", voice="alice", language="fr-FR")
+
+    # Enregistrer la voix de l'utilisateur
     response.record(
-        action="/handle-recording",
+        action="/process-recording",
         max_length="30",
         play_beep=True
     )
+
     return str(response)
 
-@app.route("/handle-recording", methods=["POST"])
-def handle_recording():
-    """Handle Twilio voice recording"""
-    recording_url = request.form['RecordingUrl']
-    print(f"Recording URL: {recording_url}")
+@app.route("/process-recording", methods=["POST"])
+def process_recording():
+    """Traitement de l'enregistrement vocal"""
+    recording_url = request.form.get('RecordingUrl')
+    print(f"Recording URL received: {recording_url}")
+
+    # Répondre à l'appelant
     response = VoiceResponse()
     response.say("Merci pour votre message. Nous allons vous répondre sous peu.", voice="alice", language="fr-FR")
+
     return str(response)
 
 if __name__ == "__main__":
