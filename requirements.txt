@@ -1,4 +1,4 @@
-websockets==10.4
+aiohttp
 fastapi
 uvicorn
 python-dotenv
