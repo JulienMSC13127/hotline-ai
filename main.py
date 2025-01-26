@@ -40,7 +40,7 @@ async def index_page():
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
     response = VoiceResponse()
-    response.say("Bonjour Julien patiente. voice assistant, powered by Twilio and the Open-A.I. Realtime API")
+    response.say("Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open-A.I. Realtime API")
     response.pause(length=1)
     response.say("O.K. you can start talking!")
     host = request.url.hostname
@@ -54,9 +54,9 @@ async def handle_media_stream(websocket: WebSocket):
     print("Client connected")
     await websocket.accept()
     url = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01'
-    async with websockets.client.connect(
+    async with websockets.WebSocketClientProtocol.connect(
         uri=url,
-        additional_headers={
+        extra_headers={
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "OpenAI-Beta": "realtime=v1"
         }
