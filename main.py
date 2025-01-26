@@ -40,7 +40,7 @@ async def index_page():
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
     response = VoiceResponse()
-    response.say("Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open-A.I. Realtime API")
+    response.say("Bonjour Julien patiente. voice assistant, powered by Twilio and the Open-A.I. Realtime API")
     response.pause(length=1)
     response.say("O.K. you can start talking!")
     host = request.url.hostname
